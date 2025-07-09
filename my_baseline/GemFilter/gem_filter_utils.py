@@ -19,7 +19,7 @@ def standard_dis_index(data, queries, k, norm=1, pool=False, kernel_size=5, sum_
     return distances, indices
 
 
-def find_context(self, query_states, key_states, print_idx_dis=False):
+def find_context(self, query_states, key_states, print_idx_dis=True):
     b, h, n, d = key_states.shape
     if self.indecies is None and self.layer_idx == self.select_layer_idx:
         assert b == 1
@@ -30,5 +30,8 @@ def find_context(self, query_states, key_states, print_idx_dis=False):
             self.topk, n), pool=True, sum_over_heads=True)
         self.indecies = indices
         if print_idx_dis:
-            print(self.layer_idx, torch.min(torch.abs(indices-62383)))
+            # todo: it calculates the minimum distance to the first needle token in the niah dataset.
+            # print(self.layer_idx, torch.min(torch.abs(indices-needle_token_reference))) # previously 62383 (is this longbench?)
+            print(f"Layer: {self.layer_idx}, top {indices.shape[-1]} indices are {indices}") # print all identified indices
     return
+

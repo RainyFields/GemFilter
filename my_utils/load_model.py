@@ -3,10 +3,20 @@ from typing import List, Optional, Tuple, Union
 from transformers.cache_utils import Cache
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from transformers.models.llama.modeling_llama import LLAMA_ATTENTION_CLASSES, LlamaForCausalLM
-from transformers.models.mistral.modeling_mistral import MISTRAL_ATTENTION_CLASSES, MistralForCausalLM
-from transformers.models.phi3.modeling_phi3 import PHI3_ATTENTION_CLASSES, Phi3ForCausalLM
+# from transformers.models.llama.modeling_llama import LLAMA_ATTENTION_CLASSES, LlamaForCausalLM
+from transformers.models.llama.modeling_llama import LlamaForCausalLM, LlamaAttention 
+# from transformers.models.mistral.modeling_mistral import MISTRAL_ATTENTION_CLASSES, MistralForCausalLM
+from transformers.models.mistral.modeling_mistral import MistralForCausalLM, MistralAttention
+# from transformers.models.phi3.modeling_phi3 import PHI3_ATTENTION_CLASSES, Phi3ForCausalLM
+from transformers.models.phi3.modeling_phi3 import Phi3ForCausalLM, Phi3Attention
+# from transformers.models.qwen3.modeling_qwen3 import QWEN3_ATTENTION_CLASSES, Qwen3ForCausalLM
+from transformers.models.qwen3.modeling_qwen3 import Qwen3ForCausalLM, Qwen3Attention
 from transformers.modeling_outputs import CausalLMOutputWithPast
+
+import transformers.models.llama.modeling_llama as modeling_llama
+
+
+
 
 def my_forward(
         self,
@@ -71,6 +81,7 @@ def my_forward(
 LlamaForCausalLM.forward = my_forward
 MistralForCausalLM.forward = my_forward
 Phi3ForCausalLM.forward = my_forward
+Qwen3ForCausalLM.forward = my_forward
 
 def load_model(model_id, modified=None, torch_dtype=torch.float16, device_map='auto', flash_attention_2=False):
     if flash_attention_2:
@@ -81,9 +92,22 @@ def load_model(model_id, modified=None, torch_dtype=torch.float16, device_map='a
         from my_baseline.GemFilter.llama_select_attention import LlamaSelectAttention
         from my_baseline.GemFilter.mistral_select_attention import MistralSelectAttention
         from my_baseline.GemFilter.phi3_select_attention import Phi3SelectAttention
-        LLAMA_ATTENTION_CLASSES[attn_implementation] = LlamaSelectAttention
-        MISTRAL_ATTENTION_CLASSES[attn_implementation] = MistralSelectAttention
-        PHI3_ATTENTION_CLASSES[attn_implementation] = Phi3SelectAttention
+        from my_baseline.GemFilter.qwen3_select_attention import Qwen3SelectAttention
+
+        # LLAMA_ATTENTION_CLASSES[attn_implementation] = LlamaSelectAttention
+        modeling_llama.LlamaAttention = LlamaSelectAttention
+        # MISTRAL_ATTENTION_CLASSES[attn_implementation] = MistralSelectAttention
+        
+        # PHI3_ATTENTION_CLASSES[attn_implementation] = Phi3SelectAttention
+        
+        import transformers.models.mistral.modeling_mistral as modeling_mistral
+        modeling_mistral.MistralAttention = MistralSelectAttention
+
+        import transformers.models.phi3.modeling_phi3 as modeling_phi3
+        modeling_phi3.Phi3Attention = Phi3SelectAttention
+
+        import transformers.models.qwen3.modeling_qwen3 as modeling_qwen3
+        modeling_qwen3.Qwen3Attention = Qwen3SelectAttention
     elif modified == 'snapkv':
         assert flash_attention_2 is True
         from my_baseline.SnapKV.monkeypatch import replace_llama, replace_mistral, replace_phi3
@@ -101,10 +125,15 @@ def load_model(model_id, modified=None, torch_dtype=torch.float16, device_map='a
     else:
         assert modified is None
 
-    model = AutoModelForCausalLM.from_pretrained(model_id, 
+    # Load the model and tokenizer locally
+    prefix_path = "/work/lei/loaded_models/"
+    model = AutoModelForCausalLM.from_pretrained(prefix_path + model_id, 
                                             attn_implementation=attn_implementation, 
                                             torch_dtype=torch_dtype, 
                                             device_map=device_map
-                                            ).eval() 
-    tokenizer = AutoTokenizer.from_pretrained(model_id)
+                                            ).eval()
+    print("sanity check: if model self-attention has been replaced")
+    print(type(model.model.layers[0].self_attn))
+
+    tokenizer = AutoTokenizer.from_pretrained(prefix_path + model_id)
     return model, tokenizer

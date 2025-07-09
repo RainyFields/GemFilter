@@ -6,7 +6,6 @@ fuzzywuzzy
 torch
 transformers==4.43.3
 einops
-flash-attn==2.6.3
 tiktoken
 rouge_score
 seaborn

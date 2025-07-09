@@ -1,0 +1,7 @@
+LICENSE.txt
+README.md
+setup.py
+my_utils.egg-info/PKG-INFO
+my_utils.egg-info/SOURCES.txt
+my_utils.egg-info/dependency_links.txt
+my_utils.egg-info/top_level.txt

@@ -37,7 +37,7 @@ python setup.py develop
 
 ```bash
 python needle_eval.py\
- --model hf_model_id\
+ --model meta-llama/Meta-Llama-3.1-8B-Instruct\
  --modified gemfilter\ 
  --topk 1024 \
  --ctx_len 32000

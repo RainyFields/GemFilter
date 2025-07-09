@@ -69,6 +69,7 @@ class LlamaSelectAttention(LlamaAttention):
         # [GemFilter] update below
         if self.select_mode:
             self.reset()
+            # print(f"[DEBUG] query_states device: {query_states.device}")
             find_context(self, query_states, key_states)
 
         if not self.select_mode and past_key_value is not None:

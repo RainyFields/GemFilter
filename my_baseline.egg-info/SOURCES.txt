@@ -1,0 +1,7 @@
+LICENSE.txt
+README.md
+setup.py
+my_baseline.egg-info/PKG-INFO
+my_baseline.egg-info/SOURCES.txt
+my_baseline.egg-info/dependency_links.txt
+my_baseline.egg-info/top_level.txt
