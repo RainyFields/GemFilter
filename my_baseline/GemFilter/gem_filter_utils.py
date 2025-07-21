@@ -26,12 +26,28 @@ def find_context(self, query_states, key_states, print_idx_dis=True):
         key_states_repeat = repeat_kv(
             key_states, self.num_key_value_groups)
         query_last_states = query_states[:, :, -1:, :]
-        _, indices = standard_dis_index(key_states_repeat, query_last_states, min(
-            self.topk, n), pool=True, sum_over_heads=True)
+        
+        # Calculate the token indices based on attention scores
+        _, indices = standard_dis_index(key_states_repeat, query_last_states, min(self.topk, n), pool=True, sum_over_heads=True)
+        
+        # Store the global indices (top-k per layer)
         self.indecies = indices
+        
+        # Store token indices per head (indices for each attention head separately)
+        self.per_head_token_indecies = None
+        if self.per_head_token_indecies is None:
+            self.per_head_token_indecies = []
+
+        # Collect the token indices per head
+        _, per_head_indices = standard_dis_index(key_states_repeat, query_last_states, min(self.topk, n), pool=True, sum_over_heads=False) # per_head_indices shape: (b, n_heads, topk)]
+        # Store the indices for each head in the list
+        for head_idx in range(h):
+            self.per_head_token_indecies.append(per_head_indices[:, head_idx, :])
+
+
         if print_idx_dis:
-            # todo: it calculates the minimum distance to the first needle token in the niah dataset.
-            # print(self.layer_idx, torch.min(torch.abs(indices-needle_token_reference))) # previously 62383 (is this longbench?)
             print(f"Layer: {self.layer_idx}, top {indices.shape[-1]} indices are {indices}") # print all identified indices
+        
     return
+
 

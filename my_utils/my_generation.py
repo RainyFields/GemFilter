@@ -6,7 +6,15 @@ import torch
 
 def get_layer_context(model, tokenizer, input_ids, layer_idx, print_context=False):
     # Get the sorted indices of the tokens in the specified layer
+    # print("within get_layer_context")
+    # print(f"Loaded model class: {model.__class__}")
+    # print(f"model.model class: {model.model.__class__}")
+    
+
     decoder_layer = model.model.layers[layer_idx]
+    # print("decoder_layer.self_attn class:", decoder_layer.self_attn.__class__)
+
+    # print("shape of decoder layer self attention indecies:", decoder_layer.self_attn.indecies.shape)
     idx = decoder_layer.self_attn.indecies[0, 0, :]
     values, _ = torch.sort(idx)
 
@@ -15,6 +23,7 @@ def get_layer_context(model, tokenizer, input_ids, layer_idx, print_context=Fals
     new_input_ids = input_ids.gather(0, values)
     if print_context:
         print(tokenizer.decode(new_input_ids))
+    
     return new_input_ids.unsqueeze(0) # this return token ids but not token indices
 
 def reduce_layer(model, layer_idx):
@@ -58,8 +67,10 @@ def set_select_layer(model, select_layer_idx):
 
 @torch.no_grad()
 def my_greedy_generate(model, tokenizer, pred_token_idx, past_key_values, max_gen_len):
+    # print("what is max_gen_len?", max_gen_len)
     generated_ids = [pred_token_idx.item()]
-    for _ in range(max_gen_len):
+    
+    for i in range(max_gen_len):
         outputs = model(
             input_ids=pred_token_idx,
             past_key_values=past_key_values
@@ -102,3 +113,5 @@ def my_greedy_generate_standard(input_ids, attn_mask, model, tokenizer, max_gen_
     output_ids = my_greedy_generate(model, tokenizer, pred_token_idx, past_key_values, max_gen_len=max_gen_len)
     response = tokenizer.decode(output_ids, skip_special_tokens=True).strip()
     return response
+
+

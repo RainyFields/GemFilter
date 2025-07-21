@@ -2,6 +2,7 @@
 import math
 import typing
 import torch
+import pdb
 from torch import nn
 import torch.nn.functional as F
 from typing import List, Optional, Tuple, Union, TypedDict
@@ -27,6 +28,8 @@ if sys.version_info >= (3, 11):
     Unpack = typing.Unpack
 else:
     Unpack = typing_extensions.Unpack
+sys.path.append('/work/lei/GemFilter')
+from my_utils.utils import scaled_dot_product_gqa_attention_weights
 
 
 class FlashAttentionKwargs(TypedDict, total=False):
@@ -50,17 +53,26 @@ class FlashAttentionKwargs(TypedDict, total=False):
     max_length_k: Optional[int]
 
 
+import torch
+import time
+
 class Qwen3SelectAttention(Qwen3Attention):
     def __init__(self, config, layer_idx):
         super().__init__(config, layer_idx)
+        # print("configuration,", config._attn_implementation)
         self._flash_attn_uses_top_left_mask = not is_flash_attn_greater_or_equal_2_10()
         self.reset()
-        self.topk = 1024
-        self.select_layer_idx = 13
+        self.topk = getattr(config, "topk", None)  # Default to 1024 if not set
+
+        self.select_layer_idx = getattr(config, "select_layer_idx", None)
         self.select_mode = False
+        self.attn_output = None  # Initialize attn_output to None
+        # print(f"configuration within Qwen3SelectAttention: {config}")
+
+       
 
     def reset(self):
-        self.indecies = None  # Make sure 'indecies' is set to None initially
+        self.indecies = None
         return
 
     def forward(
@@ -72,42 +84,71 @@ class Qwen3SelectAttention(Qwen3Attention):
         cache_position: Optional[torch.LongTensor] = None,
         **kwargs: Unpack[FlashAttentionKwargs],
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+
+
+        # Initialize timing
+        start_event = torch.cuda.Event(enable_timing=True)
+        mid1_event = torch.cuda.Event(enable_timing=True)
+        mid2_event = torch.cuda.Event(enable_timing=True)
+        mid3_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
+        start_event.record()
+
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
 
+       
         query_states = self.q_norm(self.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
         key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        mid1_event.record()
 
+        # print("shape of the query, key, value states:", query_states.shape, key_states.shape, value_states.shape)
         cos, sin = position_embeddings
+        
+        cos = cos.to(hidden_states.device)
+        sin = sin.to(hidden_states.device)
+
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+       
+        mid2_event.record()
 
-        # [GEMFILTER] Only populate 'indecies' in select_mode
         if self.select_mode:
-            self.reset()  # Reset the indecies each time
-            # print("during 1st forward pass, select_mode is True")
+            self.reset()
             find_context(self, query_states, key_states)
-            # print(f"during 1st forward pass, indecies: {self.indecies}")
-            # Here, we assume that 'find_context' returns or modifies 'self.indecies'
-            # if self.indecies is None:
-                # print("Warning: indecies are still None in select_mode")
 
+            # print("after find_context, shape of the query, key, value states:", query_states.shape, key_states.shape, value_states.shape)
+        
         if not self.select_mode and past_key_value is not None:
-            # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
-        # [GEMFILTER] End
+            # print("if not in select_mode, shape of the query, key, value states:", query_states.shape, key_states.shape, value_states.shape)
 
         attention_interface: Callable = eager_attention_forward
-        if self.config._attn_implementation != "eager":
-            if self.config._attn_implementation == "sdpa" and kwargs.get("output_attentions", False):
-                logger.warning_once(
-                    "`torch.nn.functional.scaled_dot_product_attention` does not support `output_attentions=True`. Falling back to "
-                    'eager attention. This warning can be removed using the argument `attn_implementation="eager"` when loading the model.'
-                )
-            else:
-                attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
+        if kwargs.get("output_attentions", True):
+            # print("[INFO] Using eager attention interface for output_attentions=True")
+            # self._attn_implementation = "eager"  # Force eager attention if flash attention is not used => why the results are different with flash attention?
+            # attention_interface = eager_attention_forward
+            self.config._attn_implementation == "flash_attention_2"
+            attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
 
+        else:
+            # print("what is the attention interface?", self.config._attn_implementation)
+            if self.config._attn_implementation != "eager":
+                if self.config._attn_implementation == "sdpa" and kwargs.get("output_attentions", False):
+                    logger.warning_once(
+                        "`torch.nn.functional.scaled_dot_product_attention` does not support `output_attentions=True`. Falling back to "
+                        'eager attention.'
+                    )
+                else:
+                    attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
+
+        # print(f"[INFO] Attention interface used: {attention_interface.__name__}")
+
+        # print("shape of the query, key, value states:", query_states.shape, key_states.shape, value_states.shape)
+
+        # print("kwargs for attention interface:", kwargs)
+        # pdb.set_trace() # flash_attention_forward return None for attn_weights
         attn_output, attn_weights = attention_interface(
             self,
             query_states,
@@ -116,10 +157,34 @@ class Qwen3SelectAttention(Qwen3Attention):
             attention_mask,
             dropout=0.0 if not self.training else self.attention_dropout,
             scaling=self.scaling,
-            sliding_window=self.sliding_window,  # different from Llama
+            sliding_window=self.sliding_window,
             **kwargs,
         )
+        
+        self.attn_output = attn_output
+
+        
+            # print("Attention Weights Shape:", attention_weights.shape)
+            # print("Attention Weights:", attention_weights)
+
+        # print("manual inspection of the attention output:", attn_weights.shape)
+        mid3_event.record()
+        # print("end of attention interface")
 
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)
+        end_event.record()
+
+        # Synchronize for accurate timings
+        torch.cuda.synchronize()
+
+        # Report timings
+        # print(f"[Timing] Q/K/V projection & norm: {start_event.elapsed_time(mid1_event):.3f} ms")
+        # print(f"[Timing] Rotary embedding: {mid1_event.elapsed_time(mid2_event):.3f} ms")
+        # print(f"[Timing] Attention forward pass: {mid2_event.elapsed_time(mid3_event):.3f} ms")
+        # print(f"[Timing] Output projection + reshape: {mid3_event.elapsed_time(end_event):.3f} ms")
+        # print(f"[Timing] Total forward pass: {start_event.elapsed_time(end_event):.3f} ms")
+
+        
+
         return attn_output, attn_weights

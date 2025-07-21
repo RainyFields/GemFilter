@@ -14,7 +14,7 @@ from transformers.models.qwen3.modeling_qwen3 import Qwen3ForCausalLM, Qwen3Atte
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
 import transformers.models.llama.modeling_llama as modeling_llama
-
+from my_utils.gemfilter_qwen3_model import MyQwen3ForCausalLM
 
 
 
@@ -82,8 +82,9 @@ LlamaForCausalLM.forward = my_forward
 MistralForCausalLM.forward = my_forward
 Phi3ForCausalLM.forward = my_forward
 Qwen3ForCausalLM.forward = my_forward
+MyQwen3ForCausalLM.forward = my_forward
 
-def load_model(model_id, modified=None, torch_dtype=torch.float16, device_map='auto', flash_attention_2=False):
+def load_model(model_id, modified=None, torch_dtype=torch.float16, device_map='auto', flash_attention_2=False, use_custom_generation=False, select_layer_idx=None):
     if flash_attention_2:
         attn_implementation = 'flash_attention_2'
     else:
@@ -127,13 +128,25 @@ def load_model(model_id, modified=None, torch_dtype=torch.float16, device_map='a
 
     # Load the model and tokenizer locally
     prefix_path = "/work/lei/loaded_models/"
-    model = AutoModelForCausalLM.from_pretrained(prefix_path + model_id, 
-                                            attn_implementation=attn_implementation, 
-                                            torch_dtype=torch_dtype, 
-                                            device_map=device_map
-                                            ).eval()
+    if 'qwen' in model_id.lower():
+        model = MyQwen3ForCausalLM.from_pretrained(prefix_path + model_id,
+                                            torch_dtype=torch_dtype,
+                                            attn_implementation=attn_implementation,
+                                            device_map=device_map,
+                                            )
+        model.use_custom_generation = use_custom_generation
+        model.select_layer_idx = select_layer_idx
+    else:
+        model = AutoModelForCausalLM.from_pretrained(prefix_path + model_id, 
+                                                attn_implementation=attn_implementation, 
+                                                torch_dtype=torch_dtype, 
+                                                device_map=device_map
+                                                ).eval()
+    print("start loading models...")
     print("sanity check: if model self-attention has been replaced")
     print(type(model.model.layers[0].self_attn))
-
+    print(f"Loaded model class: {model.__class__}")
     tokenizer = AutoTokenizer.from_pretrained(prefix_path + model_id)
     return model, tokenizer
+
+

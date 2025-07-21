@@ -10,6 +10,7 @@ from my_utils.load_model import load_model
 from my_utils.utils import get_most_free_cuda, min_pairwise_distance_torch
 from eval.needle.single_needle_retrieval_en import load_english_needles, sample_needle_and_construct_prompt
 
+
 gpu_id = get_most_free_cuda()
 device = torch.device(f"cuda:{gpu_id}")
 # device = f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu"
@@ -49,76 +50,89 @@ else:
 #     raise NotImplementedError
 
 torch_dtype=torch.float16
-model, tokenizer = load_model(model_id, modified=modified, torch_dtype=torch_dtype, device_map = device, flash_attention_2=flash_attention_2)
-if modified:
-    set_topk(model, topk, mode=modified)
+for select_layer_idx in range(1, 32):
+    use_custom_generation = True  # Use custom generation for modified models
+    model, tokenizer = load_model(model_id, modified=modified, torch_dtype=torch_dtype, device_map = device, flash_attention_2=flash_attention_2, use_custom_generation=use_custom_generation, select_layer_idx=select_layer_idx)
+    if modified:
+        set_topk(model, topk, mode=modified)
+
+    print("sanity check: if model self-attention has been replaced")
+    print(type(model.model.layers[0].self_attn))
+    print(f"Loaded model class: {model.__class__}")
+
+
+    # save the model
+    save_dir = f"/work/lei/loaded_models/gemfilter_models/{model_id}_select_layer_idx_{select_layer_idx}"
+    model.save_pretrained(save_dir)
+    tokenizer.save_pretrained(save_dir)
+
 
 # depth = 0.5
 # select_layer_idx = 13
 
 
 
-dataset_path = '/work/lei/local_datasets/NeedleBench/needles.jsonl'
-needles_list = load_english_needles(dataset_path)
+# dataset_path = '/work/lei/local_datasets/NeedleBench/needles.jsonl'
+# needles_list = load_english_needles(dataset_path)
 
-max_layers = len(model.model.layers) # For standard transformer architectures
-all_depths = [0, 0.11, 0.22, 0.33, 0.44, 0.56, 0.67, 0.78, 0.89, 1]
+# max_layers = len(model.model.layers) # For standard transformer architectures
+# all_depths = [0, 0.11, 0.22, 0.33, 0.44, 0.56, 0.67, 0.78, 0.89, 1]
 
-all_layer_indices = np.arange(max_layers)
-all_ctx_lens = [ctx_len]
-all_depths = [depth]
-# ctx_len = 64000  # default context length for Needle-in-a-HayStack evaluation
+# all_layer_indices = np.arange(max_layers)
+# all_ctx_lens = [ctx_len]
+# all_depths = [depth]
+# # ctx_len = 64000  # default context length for Needle-in-a-HayStack evaluation
 
-# Initialize list to store results
+# # Initialize list to store results
 
-n_samples = 100
+# n_samples = 100
 
-for ctx_len in all_ctx_lens:
-    output_dir = f"/work/lei/GemFilter_results/{model_id.split('/')[-1]}/modified_{modified}_topk_{topk}_ctx_len_{ctx_len}"
-    os.makedirs(output_dir, exist_ok=True)
-    for depth in all_depths:
-        print(f"Evaluating with depth: {depth}")
-        results = []
-        for select_layer_idx in all_layer_indices:
-            for _ in range(n_samples):
-                # Construct the Needle-in-a-HayStack Prompt
-                needle, context, question, gold_standard_answer, input_ids, attn_mask, needle_token_indices = sample_needle_and_construct_prompt(needles_list, ctx_len, tokenizer, model, depth)
-                print(f"Needle: {needle}")
-                with torch.no_grad():
-                    if modified == 'gemfilter':
-                        response = my_greedy_generate_selection(
-                            input_ids, attn_mask, model, tokenizer, max_gen_len=50, select_layer_idx=select_layer_idx, print_context=False)
-                        decoder_layer = model.model.layers[select_layer_idx]
-                        print(f"shape of decoder layer {select_layer_idx} self attention indecies:", decoder_layer.self_attn.indecies.shape)
-                        selected_token_ids = decoder_layer.self_attn.indecies[0, 0, :]
-                    else:
-                        response = my_greedy_generate_standard(input_ids, attn_mask, model, tokenizer, max_gen_len=50)
+# for ctx_len in all_ctx_lens:
+#     output_dir = f"/work/lei/GemFilter_results/{model_id.split('/')[-1]}/modified_{modified}_topk_{topk}_ctx_len_{ctx_len}"
+#     os.makedirs(output_dir, exist_ok=True)
+#     for depth in all_depths:
+#         print(f"Evaluating with depth: {depth}")
+#         results = []
+#         for select_layer_idx in all_layer_indices:
+#             for _ in range(n_samples):
+#                 # Construct the Needle-in-a-HayStack Prompt
+#                 needle, context, question, gold_standard_answer, input_ids, attn_mask, needle_token_indices = sample_needle_and_construct_prompt(needles_list, ctx_len, tokenizer, model, depth)
+#                 print(f"Needle: {needle}")
+#                 with torch.no_grad():
+#                     if modified == 'gemfilter':
+#                         response = my_greedy_generate_selection(
+#                             input_ids, attn_mask, model, tokenizer, max_gen_len=50, select_layer_idx=select_layer_idx, print_context=False)
+#                         decoder_layer = model.model.layers[select_layer_idx]
+#                         print(f"shape of decoder layer {select_layer_idx} self attention indecies:", decoder_layer.self_attn.indecies.shape)
+#                         selected_token_ids = decoder_layer.self_attn.indecies[0, 0, :]
+#                     else:
+#                         response = my_greedy_generate_standard(input_ids, attn_mask, model, tokenizer, max_gen_len=50)
 
-                # print("Selected token ids:", selected_token_ids if modified == 'gemfilter' else "Not applicable for standard attention")
-                # print("Response:", response.split("\n")[0])
+#                 # print("Selected token ids:", selected_token_ids if modified == 'gemfilter' else "Not applicable for standard attention")
+#                 # print("Response:", response.split("\n")[0])
 
-                min_distance_to_needle = min_pairwise_distance_torch(
-                    selected_token_ids, torch.tensor(needle_token_indices[0], device=device))
-                # print(f"Minimum distance to the needle token indices: {min_distance_to_needle}")
+#                 min_distance_to_needle = min_pairwise_distance_torch(
+#                     selected_token_ids, torch.tensor(needle_token_indices[0], device=device))
+#                 # print(f"Minimum distance to the needle token indices: {min_distance_to_needle}")
 
-                # Print for debug
-                print(f"Depth {depth} | Layer {select_layer_idx} | Min distance: {min_distance_to_needle}")
-                print("Response:", response.split("\n")[0])
+#                 # Print for debug
+#                 print(f"Depth {depth} | Layer {select_layer_idx} | Min distance: {min_distance_to_needle}")
+#                 print("Response:", response.split("\n")[0])
 
-                # Append results
-                results.append({
-                    "needle": needle,
-                    "depth": depth,
-                    "layer_idx": select_layer_idx,
-                    "min_distance_to_needle": min_distance_to_needle,
-                    "response": response,
-                    "gold_standard_answer": gold_standard_answer,
-                })
+#                 # Append results
+#                 results.append({
+#                     "needle": needle,
+#                     "depth": depth,
+#                     "layer_idx": select_layer_idx,
+#                     "min_distance_to_needle": min_distance_to_needle,
+#                     "response": response,
+#                     "gold_standard_answer": gold_standard_answer,
+#                 })
 
-        # Convert results to a DataFrame for analysis
-        results_df = pd.DataFrame(results)
+#         # Convert results to a DataFrame for analysis
+#         results_df = pd.DataFrame(results)
 
-        # Save to CSV for later inspection
-        results_df.to_csv(f"{output_dir}/single_needle_retrieval_results_depth_{depth:.2f}.csv", index=False)
+#         # Save to CSV for later inspection
+#         results_df.to_csv(f"{output_dir}/single_needle_retrieval_results_depth_{depth:.2f}.csv", index=False)
 
-        print(f"Evaluation completed. Results saved to single_needle_retrieval_results_depth_{depth:.2f}.csv")
+#         print(f"Evaluation completed. Results saved to single_needle_retrieval_results_depth_{depth:.2f}.csv")
