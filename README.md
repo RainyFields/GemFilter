@@ -1,5 +1,7 @@
 # GemFilter :gem:
 
+Update: this repository is compatible with Qwen3-8B and harness evaluation platform.
+
 This is an official PyTorch implementation of the paper with the title **Discovering the Gems in Early Layers: Accelerating Long-Context LLMs with 1000x Input Token Reduction**.
 
 We propose an algorithm that uses early layers of an LLM as filters to select and compress input tokens, significantly reducing the context length for subsequent processing.
